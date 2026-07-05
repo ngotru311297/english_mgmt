@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Class {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  schedule    String
+  startTime   String
+  endTime     String
+  description String
+  status      String       @default("Learning")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  students    Student[]
+  teacherLinks TeacherClass[]
+  enrollments Enrollment[]
+}
+
+model Student {
+  id          Int          @id @default(autoincrement())
+  name        String
+  classId     Int
+  phone       String
+  parentName  String
+  status      String       @default("Active")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  class       Class        @relation(fields: [classId], references: [id], onDelete: Restrict)
+  enrollments Enrollment[]
+}
+
+model Teacher {
+  id           Int            @id @default(autoincrement())
+  name         String
+  nickname     String
+  phone        String
+  status       String         @default("Active")
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  classLinks   TeacherClass[]
+}
+
+model TeacherClass {
+  id         Int      @id @default(autoincrement())
+  teacherId  Int
+  classId    Int
+  createdAt  DateTime @default(now())
+
+  teacher    Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  class      Class    @relation(fields: [classId], references: [id], onDelete: Restrict)
+
+  @@unique([teacherId, classId])
+}
+
+model Enrollment {
+  id        Int      @id @default(autoincrement())
+  classId   Int
+  studentId Int
+  createdAt DateTime @default(now())
+
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, studentId])
+}
+
+model AttendanceRecord {
+  id          Int      @id @default(autoincrement())
+  studentName String
+  className   String
+  status      Boolean
+  date        DateTime
+  createdAt   DateTime @default(now())
+}
