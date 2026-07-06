@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -e
+
+echo "[pre-commit] Frontend typecheck..."
+npx tsc --noEmit -p tsconfig.json
+
+echo "[pre-commit] Frontend tests..."
+npx vitest run
+
+if git diff --cached --name-only | grep -q '^backend/'; then
+  echo "[pre-commit] Backend typecheck..."
+  (cd backend && npx tsc --noEmit -p tsconfig.json)
+fi
+
+if [ -f backend/prisma/dev.db ]; then
+  echo "[pre-commit] Backing up dev.db..."
+  (cd backend && node scripts/backup-db.mjs)
+fi
+
+echo "[pre-commit] All checks passed."
