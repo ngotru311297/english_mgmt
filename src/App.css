@@ -1532,7 +1532,8 @@
   font-weight: 700;
 }
 
-.attendance-class-select select {
+.attendance-class-select select,
+.attendance-class-select input {
   width: 100%;
   min-height: 44px;
   border-radius: 14px;
@@ -1765,16 +1766,52 @@
   grid-template-columns: repeat(2, minmax(220px, 360px));
 }
 
-.report-export-row {
+.report-export-group {
   margin-top: 12px;
   display: flex;
-  justify-content: flex-start;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.report-export-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.report-export-block-header h4 {
+  margin: 0 0 4px;
+}
+
+.report-export-block-header p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.report-export-range-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
 }
 
 .report-actions {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.inline-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .report-count {

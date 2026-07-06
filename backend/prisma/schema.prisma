@@ -72,9 +72,30 @@ model Enrollment {
 
 model AttendanceRecord {
   id          Int      @id @default(autoincrement())
+  studentId   Int
   studentName String
   className   String
   status      Boolean
   date        DateTime
   createdAt   DateTime @default(now())
+
+  @@unique([studentId, date])
+}
+
+model TuitionSetting {
+  id            Int      @id @default(1)
+  feePerSession Int      @default(0)
+  updatedAt     DateTime @updatedAt
+}
+
+model TuitionPayment {
+  id          Int       @id @default(autoincrement())
+  studentName String
+  className   String
+  month       String
+  paid        Boolean   @default(false)
+  paidAt      DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([studentName, className, month])
 }

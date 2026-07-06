@@ -4,6 +4,8 @@ import morgan from 'morgan'
 import { z } from 'zod'
 import { prisma } from './lib/prisma.js'
 import { hasScheduleConflict, isValidTimeRange } from './utils/schedule.js'
+import { getVietnamDateText } from './utils/date.js'
+import { tuitionRouter } from './routes/tuition.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 4000)
@@ -11,6 +13,7 @@ const port = Number(process.env.PORT ?? 4000)
 app.use(cors())
 app.use(express.json())
 app.use(morgan('dev'))
+app.use('/api/tuition', tuitionRouter)
 
 const classInputSchema = z.object({
   name: z.string().trim().min(1),
@@ -63,15 +66,21 @@ const enrollmentSchema = z.object({
   studentId: z.number().int().positive(),
 })
 
-const attendanceConfirmSchema = z.object({
-  classId: z.number().int().positive(),
-  records: z.array(
-    z.object({
-      studentId: z.number().int().positive(),
-      status: z.boolean(),
-    }),
-  ).min(1),
-})
+const attendanceConfirmSchema = z
+  .object({
+    classId: z.number().int().positive(),
+    records: z
+      .array(
+        z.object({
+          studentId: z.number().int().positive(),
+          status: z.boolean(),
+        }),
+      )
+      .min(1),
+  })
+  .refine((value) => new Set(value.records.map((record) => record.studentId)).size === value.records.length, {
+    message: 'Danh sach diem danh chua hoc vien trung lap.',
+  })
 
 const attendanceDateQuerySchema = z.object({
   className: z.string().trim().min(1),
@@ -81,6 +90,18 @@ const attendanceRecordsQuerySchema = z.object({
   className: z.string().trim().min(1),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 })
+
+const attendanceExportQuerySchema = z
+  .object({
+    start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  .refine((value) => (value.start ? Boolean(value.end) : !value.end), {
+    message: 'Cần chọn cả ngày bắt đầu và ngày kết thúc.',
+  })
+  .refine((value) => (value.start && value.end ? value.start <= value.end : true), {
+    message: 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.',
+  })
 
 const attendanceUpdateSchema = z.object({
   records: z
@@ -503,12 +524,16 @@ app.delete('/api/enrollments', async (req, res, next) => {
   try {
     const payload = enrollmentSchema.parse(req.body)
 
-    await prisma.enrollment.deleteMany({
+    const result = await prisma.enrollment.deleteMany({
       where: {
         classId: payload.classId,
         studentId: payload.studentId,
       },
     })
+
+    if (result.count === 0) {
+      return res.status(404).json({ message: 'Khong tim thay enrollment.' })
+    }
 
     return res.status(204).send()
   } catch (error) {
@@ -578,37 +603,48 @@ app.post('/api/attendance/confirm', async (req, res, next) => {
       return res.status(400).json({ message: 'Hoc vien khong thuoc lop hoc hoac dang Inactive.' })
     }
 
-    const confirmedDate = new Date()
-    const confirmedDateText = confirmedDate.toISOString().slice(0, 10)
-    const { start, end } = getDayRange(confirmedDateText)
+    const todayText = getVietnamDateText()
+    const { start, end } = getDayRange(todayText)
 
-    const existingCount = await prisma.attendanceRecord.count({
-      where: {
-        className: classItem.name,
-        date: {
-          gte: start,
-          lte: end,
-        },
-      },
-    })
+    const alreadyConfirmedMessage = 'Lop nay da confirm diem danh hom nay. Vui long sang Bao cao nhanh de chinh sua.'
 
-    if (existingCount > 0) {
-      return res.status(409).json({ message: 'Lop nay da confirm diem danh hom nay. Vui long sang Bao cao nhanh de chinh sua.' })
+    try {
+      await prisma.$transaction(async (tx) => {
+        const existingCount = await tx.attendanceRecord.count({
+          where: {
+            className: classItem.name,
+            date: {
+              gte: start,
+              lte: end,
+            },
+          },
+        })
+
+        if (existingCount > 0) {
+          throw new Error('ALREADY_CONFIRMED')
+        }
+
+        await tx.attendanceRecord.createMany({
+          data: payload.records.map((record) => ({
+            studentId: record.studentId,
+            studentName: activeStudents.get(record.studentId) ?? '',
+            className: classItem.name,
+            status: record.status,
+            date: start,
+          })),
+        })
+      })
+    } catch (transactionError) {
+      if (transactionError instanceof Error && transactionError.message === 'ALREADY_CONFIRMED') {
+        return res.status(409).json({ message: alreadyConfirmedMessage })
+      }
+      throw transactionError
     }
-
-    await prisma.attendanceRecord.createMany({
-      data: payload.records.map((record) => ({
-        studentName: activeStudents.get(record.studentId) ?? '',
-        className: classItem.name,
-        status: record.status,
-        date: confirmedDate,
-      })),
-    })
 
     return res.status(201).json({
       saved: payload.records.length,
       className: classItem.name,
-      date: confirmedDate.toISOString(),
+      date: start.toISOString(),
     })
   } catch (error) {
     next(error)
@@ -648,15 +684,15 @@ app.get('/api/attendance/records', async (req, res, next) => {
       orderBy: [{ studentName: 'asc' }, { createdAt: 'desc' }],
     })
 
-    const latestByStudentName = new Map<string, (typeof records)[number]>()
+    const latestByStudentId = new Map<number, (typeof records)[number]>()
     records.forEach((record) => {
-      if (!latestByStudentName.has(record.studentName)) {
-        latestByStudentName.set(record.studentName, record)
+      if (!latestByStudentId.has(record.studentId)) {
+        latestByStudentId.set(record.studentId, record)
       }
     })
 
     return res.json({
-      records: Array.from(latestByStudentName.values()).map((record) => ({
+      records: Array.from(latestByStudentId.values()).map((record) => ({
         id: record.id,
         studentName: record.studentName,
         className: record.className,
@@ -688,9 +724,16 @@ app.patch('/api/attendance/records', async (req, res, next) => {
   }
 })
 
-app.get('/api/attendance/export', async (_req, res, next) => {
+app.get('/api/attendance/export', async (req, res, next) => {
   try {
+    const query = attendanceExportQuerySchema.parse(req.query)
+    const where =
+      query.start && query.end
+        ? { date: { gte: getDayRange(query.start).start, lte: getDayRange(query.end).end } }
+        : {}
+
     const records = await prisma.attendanceRecord.findMany({
+      where,
       orderBy: [{ date: 'desc' }, { className: 'asc' }, { studentName: 'asc' }],
     })
 
@@ -709,6 +752,8 @@ app.get('/api/attendance/export', async (_req, res, next) => {
 })
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(error)
+
   if (error instanceof z.ZodError) {
     return res.status(400).json({ message: 'Du lieu dau vao khong hop le.', issues: error.issues })
   }

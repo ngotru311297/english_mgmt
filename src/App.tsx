@@ -7,8 +7,9 @@ import { api, type ApiAttendanceReportRecord, type ApiClass, type ApiStudent, ty
 import { extractScheduleDays, getScheduleBounds, parseScheduleBlocks, serializeScheduleBlocks, toMinutes } from './classScheduleUtils'
 import * as XLSX from 'xlsx'
 import studentExcelTemplateUrl from './template.xlsx?url'
+import TuitionSection from './TuitionSection'
 
-type Section = 'Tổng quan' | 'Lớp học' | 'Học viên' | 'Giáo Viên' | 'Cài đặt'
+type Section = 'Tổng quan' | 'Lớp học' | 'Học viên' | 'Giáo Viên' | 'Học Phí' | 'Cài đặt'
 type ClassSummary = {
   id: number
   name: string
@@ -172,6 +173,7 @@ function App() {
   const [attendanceConfirming, setAttendanceConfirming] = useState(false)
   const [attendanceConfirmMessage, setAttendanceConfirmMessage] = useState('')
   const [attendanceConfirmError, setAttendanceConfirmError] = useState('')
+  const [showAttendanceConfirmModal, setShowAttendanceConfirmModal] = useState(false)
   const [attendanceLockChecking, setAttendanceLockChecking] = useState(false)
   const [attendanceLockedByConfirmed, setAttendanceLockedByConfirmed] = useState(false)
   const [reportClassId, setReportClassId] = useState<number | null>(null)
@@ -182,6 +184,8 @@ function App() {
   const [reportLoadingRows, setReportLoadingRows] = useState(false)
   const [reportSaving, setReportSaving] = useState(false)
   const [reportExporting, setReportExporting] = useState(false)
+  const [reportExportStart, setReportExportStart] = useState('')
+  const [reportExportEnd, setReportExportEnd] = useState('')
   const [reportMessage, setReportMessage] = useState('')
   const [reportError, setReportError] = useState('')
   const [reportEditMode, setReportEditMode] = useState(false)
@@ -999,13 +1003,13 @@ function App() {
     }
   }
 
-  const exportAttendanceRecords = async () => {
+  const exportAttendanceRecords = async (range?: { start: string; end: string }) => {
     setReportExporting(true)
     setReportError('')
     setReportMessage('')
 
     try {
-      const result = await api.getAttendanceExport()
+      const result = await api.getAttendanceExport(range)
 
       if (result.records.length === 0) {
         setReportError('Chưa có dữ liệu điểm danh để export.')
@@ -1021,13 +1025,29 @@ function App() {
       worksheet['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 12 }, { wch: 14 }]
       const workbook = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(workbook, worksheet, 'AttendanceRecord')
-      XLSX.writeFile(workbook, `attendance-record-${new Date().toISOString().slice(0, 10)}.xlsx`)
+      const fileName = range
+        ? `attendance-record-${range.start}_${range.end}.xlsx`
+        : `attendance-record-${new Date().toISOString().slice(0, 10)}.xlsx`
+      XLSX.writeFile(workbook, fileName)
       setReportMessage(`Đã export ${result.records.length} dòng điểm danh.`)
     } catch (error) {
       setReportError(error instanceof Error ? error.message : 'Không thể export dữ liệu điểm danh.')
     } finally {
       setReportExporting(false)
     }
+  }
+
+  const exportAttendanceRecordsByRange = async () => {
+    if (!reportExportStart || !reportExportEnd) {
+      setReportError('Vui lòng chọn cả ngày bắt đầu và ngày kết thúc.')
+      return
+    }
+    if (reportExportStart > reportExportEnd) {
+      setReportError('Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.')
+      return
+    }
+
+    await exportAttendanceRecords({ start: reportExportStart, end: reportExportEnd })
   }
 
   const confirmAttendance = async () => {
@@ -1053,6 +1073,7 @@ function App() {
       })
 
       setAttendanceConfirmMessage(`Đã lưu điểm danh ${result.saved} học viên cho lớp ${result.className}.`)
+      setAttendanceLockedByConfirmed(true)
       setSelectedAttendanceStudentIds([])
       setAttendanceStatusByClass((previousValue) => ({
         ...previousValue,
@@ -1183,7 +1204,7 @@ function App() {
         </button>
 
         <nav className="sidebar-nav">
-          {(['Tổng quan', 'Lớp học', 'Học viên', 'Giáo Viên', 'Cài đặt'] as Section[]).map((item) => (
+          {(['Tổng quan', 'Lớp học', 'Học viên', 'Giáo Viên', 'Học Phí', 'Cài đặt'] as Section[]).map((item) => (
             <button
               key={item}
               className={`nav-item ${activeSection === item ? 'active' : ''}`}
@@ -1225,6 +1246,12 @@ function App() {
                     <path d="M16 11h5" />
                     <path d="M18.5 8.5v5" />
                   </svg>
+                ) : item === 'Học Phí' ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7v10" />
+                    <path d="M15 9.5c0-1.4-1.3-2.5-3-2.5s-3 1.1-3 2.5 1.3 2 3 2.5 3 1.1 3 2.5-1.3 2.5-3 2.5-3-1.1-3-2.5" />
+                  </svg>
                 ) : (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="3" />
@@ -1252,6 +1279,8 @@ function App() {
                 ? 'Quản lý danh sách học viên hiện tại.'
                 : activeSection === 'Giáo Viên'
                 ? 'Quản lý danh sách giáo viên và thông tin giảng dạy.'
+                : activeSection === 'Học Phí'
+                ? 'Tính học phí theo tháng dựa trên số buổi điểm danh có mặt.'
                 : 'Cấu hình cài đặt và thông tin ứng dụng.'}
             </p>
           </div>
@@ -1811,7 +1840,7 @@ function App() {
                         <button
                           type="button"
                           className="attendance-action-button attendance-action-button--confirm"
-                          onClick={() => void confirmAttendance()}
+                          onClick={() => setShowAttendanceConfirmModal(true)}
                           disabled={!selectedAttendanceClassId || attendanceStudents.length === 0 || attendanceConfirming || attendanceLockedByConfirmed || attendanceLockChecking}
                         >
                           {attendanceConfirming ? 'Đang lưu...' : 'Confirm điểm danh'}
@@ -1924,15 +1953,56 @@ function App() {
                 </button>
                 <h3>Báo cáo nhanh</h3>
                 <p>Chọn lớp và ngày để xem hoặc chỉnh sửa điểm danh đã lưu.</p>
-                <div className="report-export-row">
-                  <button
-                    type="button"
-                    className="attendance-action-button attendance-action-button--export"
-                    onClick={() => void exportAttendanceRecords()}
-                    disabled={reportExporting}
-                  >
-                    {reportExporting ? 'Đang export...' : 'EXPORT'}
-                  </button>
+                <div className="report-export-group">
+                  <div className="report-export-block">
+                    <div className="report-export-block-header">
+                      <h4>Export toàn bộ</h4>
+                      <p>Xuất toàn bộ lịch sử điểm danh đã lưu ra file Excel.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="attendance-action-button attendance-action-button--export"
+                      onClick={() => void exportAttendanceRecords()}
+                      disabled={reportExporting}
+                    >
+                      {reportExporting ? 'Đang export...' : 'Export toàn bộ'}
+                    </button>
+                  </div>
+
+                  <div className="report-export-block">
+                    <div className="report-export-block-header">
+                      <h4>Export theo khoảng thời gian</h4>
+                      <p>Chọn ngày bắt đầu và ngày kết thúc để chỉ xuất điểm danh trong khoảng đó.</p>
+                    </div>
+                    <div className="report-export-range-fields">
+                      <label className="attendance-class-select">
+                        Từ ngày
+                        <input
+                          type="date"
+                          value={reportExportStart}
+                          onChange={(event) => setReportExportStart(event.target.value)}
+                          aria-label="Từ ngày export điểm danh"
+                        />
+                      </label>
+                      <label className="attendance-class-select">
+                        Đến ngày
+                        <input
+                          type="date"
+                          value={reportExportEnd}
+                          onChange={(event) => setReportExportEnd(event.target.value)}
+                          aria-label="Đến ngày export điểm danh"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="attendance-action-button attendance-action-button--export"
+                        onClick={() => void exportAttendanceRecordsByRange()}
+                        disabled={reportExporting}
+                      >
+                        {reportExporting ? 'Đang export...' : 'Export theo khoảng'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="attendance-panel report-panel">
@@ -2236,4 +2306,365 @@ function App() {
                     <h4>{editingTeacherId !== null ? 'Sửa thông tin giáo viên' : 'Thêm giáo viên mới'}</h4>
                     <button type="button" className="button-secondary form-close-button" onClick={resetTeacherForm}>
                       Đóng
+                    </button>
+                  </div>
+                  <div className="student-field-row">
+                    <label>
+                      Tên giáo viên
+                      <input
+                        value={teacherForm.name}
+                        onChange={(e) => setTeacherForm((prev) => ({ ...prev, name: e.target.value }))}
+                        placeholder="Nhập tên giáo viên"
+                        aria-label="Tên giáo viên"
+                      />
+                    </label>
+                    <label>
+                      Biệt danh
+                      <input
+                        value={teacherForm.nickname}
+                        onChange={(e) => setTeacherForm((prev) => ({ ...prev, nickname: e.target.value }))}
+                        placeholder="Nhập biệt danh"
+                        aria-label="Biệt danh giáo viên"
+                      />
+                    </label>
+                  </div>
+                  <div className="student-field-row">
+                    <label>
+                      Số điện thoại
+                      <input
+                        value={teacherForm.phone}
+                        onChange={(e) => setTeacherForm((prev) => ({ ...prev, phone: e.target.value }))}
+                        placeholder="Nhập số điện thoại"
+                        aria-label="Số điện thoại giáo viên"
+                      />
+                    </label>
+                  </div>
+                  <div className="student-field-row teacher-field-row--single">
+                    <label className="teacher-class-picker">
+                      <span className="teacher-class-picker-label">Lớp phụ trách</span>
+                      <select
+                        multiple
+                        className="teacher-class-multiselect"
+                        value={teacherForm.classIds.map(String)}
+                        onChange={(e) => {
+                          const selectedIds = Array.from(e.target.selectedOptions).map((option) => Number(option.value))
+                          setTeacherForm((prev) => ({ ...prev, classIds: selectedIds }))
+                        }}
+                        aria-label="Chọn lớp phụ trách"
+                      >
+                        {availableClassOptions.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="form-actions">
+                    <button type="button" className="student-save-button teacher-save-button" onClick={() => void addTeacher()}>
+                      Lưu giáo viên
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="card teacher-list-card">
+              <div className="card-header">
+                <h3>Danh sách giáo viên ({filteredTeachers.length})</h3>
+              </div>
+              <div className="student-list-topline">
+                <div className="student-search-field">
+                  <input
+                    value={teacherSearch}
+                    onChange={(e) => setTeacherSearch(e.target.value)}
+                    placeholder="Tìm theo tên giáo viên hoặc lớp phụ trách"
+                    aria-label="Tìm giáo viên theo tên hoặc lớp phụ trách"
+                  />
+                  {teacherSearch.trim() ? (
+                    <button type="button" className="button-secondary student-search-clear" onClick={clearTeacherSearch}>
+                      Xóa lọc
+                    </button>
+                  ) : null}
+                </div>
+                <p className="student-search-hint">
+                  {teacherSearch.trim()
+                    ? `Đang lọc theo "${teacherSearch.trim()}"`
+                    : 'Bạn có thể tìm theo tên giáo viên hoặc tên lớp phụ trách.'}
+                </p>
+              </div>
+              {isLoadingData ? <p>Đang tải danh sách giáo viên...</p> : null}
+              {filteredTeachers.length > 0 ? (
+                <ul className="student-list">
+                  {filteredTeachers.map((teacher) => (
+                    <li
+                      key={teacher.id}
+                      className={`teacher-list-item ${teacher.status === 'Inactive' ? 'student-list-item--inactive' : 'student-list-item--active'}`}
+                    >
+                      <div className="student-list-headline">
+                        <strong>{teacher.name}</strong>
+                        <div className="student-list-actions">
+                          {teacher.status !== 'Inactive' ? <span className="student-status-badge teacher-status-badge">Active</span> : null}
+                          {teacher.status !== 'Inactive' ? (
+                            <>
+                              <button type="button" className="teacher-edit-button" onClick={() => openTeacherEditForm(teacher)}>
+                                Edit
+                              </button>
+                              <button type="button" className="student-inactive-button" onClick={() => openTeacherDeactivateModal(teacher)}>
+                                Inactive
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="student-inactive-chip">Inactive</span>
+                              <button type="button" className="student-active-button" onClick={() => void activateTeacher(teacher)}>
+                                Active
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <span className="teacher-list-nickname">{teacher.nickname}</span>
+                      <span className="teacher-list-class">{teacher.classNames.join(', ') || 'Chưa gán'}</span>
+                      <span className="teacher-list-phone">{teacher.phone}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="student-empty-state">Không tìm thấy giáo viên phù hợp.</p>
+              )}
+            </section>
+          </>
+        ) : activeSection === 'Học Phí' ? (
+          <TuitionSection />
+        ) : (
+          <section className="card">
+            <p>Chức năng đang phát triển.</p>
+          </section>
+        )}
+      </main>
+
+      {showClassNameRequiredModal ? (
+        <div className="modal-overlay">
+          <div className="modal-card class-name-required-modal">
+            <h4>Thiếu tên lớp</h4>
+            <p>Vui lòng nhập tên lớp học trước khi lưu.</p>
+            <div className="modal-actions">
+              <button type="button" className="class-name-required-button" onClick={() => setShowClassNameRequiredModal(false)}>
+                Đã hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {classToDelete ? (
+        <div className="modal-overlay">
+          <div className="modal-card delete-modal-card">
+            <h4>Xóa lớp học</h4>
+            <p>Nhập lại tên lớp “{classToDelete.name}” để xác nhận xóa. Hành động này không thể hoàn tác.</p>
+            <input
+              value={deleteClassNameInput}
+              onChange={(e) => setDeleteClassNameInput(e.target.value)}
+              placeholder="Nhập tên lớp để xác nhận"
+              aria-label="Nhập tên lớp để xác nhận xóa"
+            />
+            <div className="modal-actions">
+              <button type="button" className="modal-close-button" onClick={closeDeleteClassModal}>
+                Hủy
+              </button>
+              <button type="button" onClick={() => void confirmDeleteClass()}>
+                Xóa lớp
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showUpdateConflictModal ? (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h4>Lịch học bị trùng</h4>
+            <p>Khung giờ bạn vừa chọn bị trùng với lớp khác. Vui lòng kiểm tra lại lịch học.</p>
+            <div className="modal-actions">
+              <button type="button" onClick={closeUpdateConflictModal}>
+                Đã hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {scheduleDayToRemove ? (
+        <div className="modal-overlay">
+          <div className="modal-card schedule-remove-modal-card">
+            <h4>Bỏ chọn {scheduleDayToRemove}?</h4>
+            <p>Bạn có chắc muốn bỏ lịch học vào {scheduleDayToRemove} không?</p>
+            <div className="modal-actions">
+              <button type="button" className="modal-close-button" onClick={closeScheduleDayRemoveModal}>
+                Hủy
+              </button>
+              <button type="button" onClick={confirmScheduleDayRemove}>
+                Bỏ chọn
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showStudentExcelModal ? (
+        <div className="modal-overlay">
+          <div className="modal-card student-excel-modal-card">
+            <h4>Nhập học viên từ Excel</h4>
+            <p>Tải file mẫu, điền thông tin học viên rồi chọn file Excel để nhập vào hệ thống.</p>
+
+            <div className="student-excel-template-row">
+              <button
+                type="button"
+                className="button-secondary student-excel-template-button"
+                onClick={() => void downloadStudentExcelTemplate()}
+              >
+                Tải file mẫu
+              </button>
+            </div>
+
+            <div className="student-excel-file-field">
+              <input type="file" accept=".xlsx,.xls" onChange={handleStudentExcelFileChange} aria-label="Chọn file Excel học viên" />
+              {studentExcelFile ? <p className="student-excel-file-name">{studentExcelFile.name}</p> : null}
+            </div>
+
+            {studentExcelError ? <p className="student-excel-error">{studentExcelError}</p> : null}
+
+            {studentExcelResult ? (
+              <div className="student-excel-summary">
+                <strong>
+                  Đã nhập {studentExcelResult.imported} học viên, bỏ qua {studentExcelResult.skipped} dòng.
+                </strong>
+                {studentExcelResult.errors.length > 0 ? (
+                  <ul>
+                    {studentExcelResult.errors.map((message, index) => (
+                      <li key={index}>{message}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="modal-actions">
+              <button type="button" className="modal-close-button" onClick={closeStudentExcelModal}>
+                Đóng
+              </button>
+              <button
+                type="button"
+                className="student-excel-import-button"
+                disabled={!studentExcelFile || studentExcelImporting}
+                onClick={() => void importStudentsFromExcel()}
+              >
+                {studentExcelImporting ? 'Đang nhập...' : 'Nhập học viên'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {studentToDeactivate ? (
+        <div className="modal-overlay">
+          <div className="modal-card student-deactivate-modal-card">
+            <h4>Chuyển học viên sang Inactive?</h4>
+            <p>
+              Học viên “{studentToDeactivate.name}” sẽ không còn tính vào sĩ số lớp {studentToDeactivate.className}.
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="student-deactivate-cancel-button" onClick={closeStudentDeactivateModal}>
+                Hủy
+              </button>
+              <button type="button" className="student-deactivate-confirm-button" onClick={() => void confirmStudentDeactivate()}>
+                Inactive
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showTeacherNameRequiredModal ? (
+        <div className="modal-overlay">
+          <div className="modal-card teacher-name-required-modal">
+            <h4>Thiếu thông tin giáo viên</h4>
+            <p>Vui lòng nhập tên và biệt danh giáo viên trước khi lưu.</p>
+            <div className="modal-actions">
+              <button type="button" className="teacher-name-required-button" onClick={() => setShowTeacherNameRequiredModal(false)}>
+                Đã hiểu
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {teacherToDeactivate ? (
+        <div className="modal-overlay">
+          <div className="modal-card teacher-deactivate-modal-card">
+            <h4>Chuyển giáo viên sang Inactive?</h4>
+            <p>Giáo viên “{teacherToDeactivate.name}” sẽ không còn hiển thị là đang giảng dạy.</p>
+            <div className="modal-actions">
+              <button type="button" className="teacher-deactivate-cancel-button" onClick={closeTeacherDeactivateModal}>
+                Hủy
+              </button>
+              <button type="button" className="teacher-deactivate-confirm-button" onClick={() => void confirmTeacherDeactivate()}>
+                Inactive
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showReportConfirmModal ? (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h4>Xác nhận lưu điểm danh</h4>
+            <p>
+              Bạn có chắc muốn lưu các thay đổi điểm danh cho lớp {reportClassName} ngày {reportDate}?
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="modal-close-button" onClick={() => setShowReportConfirmModal(false)}>
+                Hủy
+              </button>
+              <button type="button" disabled={reportSaving} onClick={() => void confirmUpdateReportRows()}>
+                {reportSaving ? 'Đang lưu...' : 'Xác nhận lưu'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showAttendanceConfirmModal ? (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <h4>Xác nhận điểm danh</h4>
+            <p>
+              Xác nhận điểm danh xong cho lớp {selectedAttendanceClassName}? Sau khi xác nhận sẽ không thể điểm danh lại cho lớp này hôm
+              nay.
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="modal-close-button" onClick={() => setShowAttendanceConfirmModal(false)}>
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={attendanceConfirming}
+                onClick={async () => {
+                  await confirmAttendance()
+                  setShowAttendanceConfirmModal(false)
+                }}
+              >
+                {attendanceConfirming ? 'Đang lưu...' : 'Xác nhận'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export default App
      

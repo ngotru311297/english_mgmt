@@ -1,0 +1,23 @@
+# Dependencies (never edited directly; package.json/lockfiles are the source of truth)
+node_modules/
+backend/node_modules/
+
+# Build output
+dist/
+backend/dist/
+
+# Logs
+*.log
+
+# SQLite database + generated Prisma client (binary/generated, not hand-edited)
+backend/prisma/dev.db
+backend/prisma/dev.db-journal
+backend/node_modules/.prisma/
+backend/node_modules/@prisma/client/
+
+# Lockfiles (large, rarely need to be read)
+package-lock.json
+backend/package-lock.json
+
+# Vite cache
+node_modules/.vite/

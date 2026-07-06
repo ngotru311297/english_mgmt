@@ -52,7 +52,7 @@ type ApiErrorBody = {
   message?: string
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {
@@ -110,5 +110,8 @@ export const api = {
     ),
   updateAttendanceRecords: (payload: { records: Array<{ id: number; status: boolean }> }) =>
     request<{ updated: number }>('/api/attendance/records', { method: 'PATCH', body: payload }),
-  getAttendanceExport: () => request<{ records: ApiAttendanceReportRecord[] }>('/api/attendance/export'),
+  getAttendanceExport: (range?: { start: string; end: string }) =>
+    request<{ records: ApiAttendanceReportRecord[] }>(
+      range ? `/api/attendance/export?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}` : '/api/attendance/export',
+    ),
 }
