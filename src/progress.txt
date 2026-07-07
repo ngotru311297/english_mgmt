@@ -1,0 +1,80 @@
+TIẾN ĐỘ: TÁCH FILE App.tsx (frontend) & server.ts (backend) THEO TÍNH NĂNG
+Cập nhật lần cuối: 2026-07-08
+
+Bối cảnh: App.tsx (~2670 dòng) và backend/src/server.ts (~784 dòng) gộp quá nhiều
+tính năng vào 1 file, khó sửa/mở rộng. Đang tách dần theo tính năng, mỗi bước tách
+xong đều verify bằng tsc + vitest + gọi API thật (curl) rồi mới sang bước kế tiếp.
+Kế hoạch đầy đủ nằm ở: C:\Users\ngotru\.claude\plans\v-i-t-c-ch-l-sorted-canyon.md
+
+=== ĐÃ HOÀN THÀNH ===
+
+1. BACKEND — đã tách xong toàn bộ, verify OK (tsc sạch + test API thật qua curl):
+   - backend/src/routes/classes.ts     (CRUD lớp + GET /api/classes/:id/students)
+   - backend/src/routes/students.ts    (CRUD học viên)
+   - backend/src/routes/teachers.ts    (CRUD giáo viên)
+   - backend/src/routes/enrollments.ts (POST/DELETE enrollment)
+   - backend/src/routes/attendance.ts  (confirm/dates/records/export điểm danh)
+   - backend/src/server.ts giờ chỉ còn app bootstrap + mount router + error middleware (~60 dòng)
+
+2. FRONTEND — hạ tầng dùng chung:
+   - src/types.ts            : ClassSummary/StudentSummary/TeacherSummary + mapApi*
+   - src/classNameUtils.ts   : currentClassYear/normalizeClassName/stripClassYearPrefix
+   - src/hooks/useAppData.ts : hook gom state classes/students/teachers/apiError/isLoadingData
+                               + loadClasses/loadStudents/loadTeachers (fetch 1 lần lúc mount)
+
+3. FRONTEND — đã tách xong 2 section:
+   - src/TeachersSection.tsx  (section "Giáo Viên") — user đã test OK trên UI
+   - src/StudentsSection.tsx  (section "Học viên")  — ĐANG CHỜ USER TỰ TEST UI
+     (thêm/sửa/inactive/Excel import) — chưa có xác nhận cuối cùng
+
+4. FIX PHÁT SINH (không thuộc phạm vi tách file, do user báo lỗi khi test):
+   - Cho phép thêm giáo viên KHÔNG gán lớp nào (trước đây bắt buộc >=1 lớp):
+     + backend/src/routes/teachers.ts: bỏ .min(1) khỏi classIds trong
+       teacherInputSchema và teacherUpdateInputSchema
+     + src/TeachersSection.tsx: bỏ điều kiện uniqueClassIds.length === 0 trong addTeacher()
+     Đã test qua API thật: tạo giáo viên classIds:[] lưu thành công.
+
+=== VIỆC CẦN LÀM TIẾP (mai làm) ===
+
+1. Chờ user tự test UI section "Học viên" (thêm/sửa/inactive/Excel import) trên trình
+   duyệt thật — vì môi trường làm việc hiện tại không có công cụ trình duyệt để tự
+   test tương tác, chỉ verify được bằng tsc/vitest/curl. Nếu có lỗi, báo lại để sửa
+   trước khi tách tiếp (rút kinh nghiệm từ vụ giáo viên không gán lớp).
+
+2. Tách OverviewSection.tsx (section "Tổng quan"):
+   - Cần chuyển: danh sách lớp, lịch học trong tuần, biểu đồ số lượng học viên,
+     selectedClassId, chartLevels/maxClassCount, getClassesForDay,
+     getScheduleBlocksForDay, formatScheduleBlocksForDay, getTeacherNicknamesForClass,
+     normalizeTimeValue, formatTimeRange (dùng chung với phần Lớp học nên cân nhắc
+     đưa vào file util dùng chung, giống cách đã làm với classNameUtils.ts)
+   - Lưu ý: các hàm helper này hiện đang dùng chung giữa "Tổng quan" và "Lớp học",
+     cần tách khéo để cả 2 section đều dùng được mà không lặp code.
+
+3. Tách "Lớp học" (activeSection === 'Lớp học') thành nhiều file con vì gộp 3 tính
+   năng qua manageView (menu/classes/attendance/reports):
+   - ClassManagementSection.tsx : menu + CRUD lớp học (form, lịch học theo ngày,
+     xóa lớp có xác nhận tên, sửa lớp)
+   - AttendanceSection.tsx      : điểm danh theo lớp/ngày hôm nay + chế độ học bù
+   - AttendanceReportsSection.tsx: "Báo cáo nhanh" — xem/sửa điểm danh đã lưu, export Excel
+   - ClassesSection.tsx (mỏng)  : giữ state manageView, render 1 trong 3 component trên
+   - Bỏ nhánh manageView === 'students' (chỉ là placeholder chưa cài đặt, học viên
+     thật đã có ở section "Học viên" riêng)
+
+4. Sau khi tách xong tất cả section, App.tsx chỉ còn layout khung (sidebar, header,
+   activeSection switch) + gọi useAppData() + render các <XSection /> — ước tính còn
+   ~200-300 dòng.
+
+5. Verify từng bước như đã làm: tsc --noEmit (frontend + backend), npm run build,
+   npx vitest run, chạy dev server thật + gọi API qua curl để test luồng, dọn sạch
+   dữ liệu test khỏi backend/prisma/dev.db sau mỗi lần test, rồi mới báo user tự
+   test UI trên trình duyệt trước khi làm bước kế tiếp.
+
+=== LƯU Ý QUAN TRỌNG ===
+- Môi trường làm việc không có trình duyệt để tự test UI tương tác — chỉ verify được
+  bằng tsc/build/vitest/curl. Luôn nhờ user tự bấm thử trên UI thật trước khi tách
+  section tiếp theo, để giảm rủi ro (đã áp dụng từ TeachersSection/StudentsSection).
+- classes/students/teachers là state dùng chung giữa nhiều section (không chỉ thuộc
+  riêng 1 section), nên giữ trong useAppData() ở App.tsx và truyền xuống qua props,
+  KHÔNG để mỗi section tự fetch riêng (sẽ gây lệch dữ liệu giữa các section).
+- Sau mỗi test qua API thật (curl) nhớ dọn sạch dữ liệu test khỏi backend/prisma/dev.db
+  vì đó là DB dev thật của user, không phải DB test riêng.

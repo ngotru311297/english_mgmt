@@ -1,55 +1,24 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
 import bannerImage from './Banner.png'
 import logoImage from './LOGO.png'
 import { hasScheduleConflict, isValidTimeRange } from './classScheduleUtils'
-import { api, type ApiAttendanceReportRecord, type ApiClass, type ApiStudent, type ApiTeacher } from './api'
+import { api, type ApiAttendanceReportRecord } from './api'
 import { extractScheduleDays, getScheduleBounds, parseScheduleBlocks, serializeScheduleBlocks, toMinutes } from './classScheduleUtils'
 import * as XLSX from 'xlsx'
-import studentExcelTemplateUrl from './template.xlsx?url'
 import TuitionSection from './TuitionSection'
+import TeachersSection from './TeachersSection'
+import StudentsSection from './StudentsSection'
+import { useAppData } from './hooks/useAppData'
+import type { ClassSummary } from './types'
+import { currentClassYear, normalizeClassName, stripClassYearPrefix } from './classNameUtils'
 
 type Section = 'Tổng quan' | 'Lớp học' | 'Học viên' | 'Giáo Viên' | 'Học Phí' | 'Cài đặt'
-type ClassSummary = {
-  id: number
-  name: string
-  count: number
-  schedule: string
-  startTime: string
-  endTime: string
-  description: string
-}
-
-type StudentSummary = {
-  id: number
-  name: string
-  classId: number
-  className: string
-  phone: string
-  parentName: string
-  status?: 'Active' | 'Inactive'
-}
-
-type TeacherSummary = {
-  id: number
-  name: string
-  nickname: string
-  classIds: number[]
-  classNames: string[]
-  phone: string
-  status?: 'Active' | 'Inactive'
-}
 
 type ScheduleBlock = {
   day: string
   startTime: string
   endTime: string
-}
-
-type StudentExcelImportResult = {
-  imported: number
-  skipped: number
-  errors: string[]
 }
 
 type AttendanceReportRow = {
@@ -60,75 +29,7 @@ type AttendanceReportRow = {
   date: string
 }
 
-const mapApiClassToSummary = (item: ApiClass): ClassSummary => ({
-  id: item.id,
-  name: item.name,
-  count: item.count,
-  schedule: item.schedule,
-  startTime: item.startTime,
-  endTime: item.endTime,
-  description: item.description,
-})
-
-const mapApiStudentToSummary = (item: ApiStudent): StudentSummary => ({
-  id: item.id,
-  name: item.name,
-  classId: item.classId,
-  className: item.className,
-  phone: item.phone,
-  parentName: item.parentName,
-  status: item.status,
-})
-
-const mapApiTeacherToSummary = (item: ApiTeacher): TeacherSummary => ({
-  id: item.id,
-  name: item.name,
-  nickname: item.nickname,
-  classIds: item.classIds,
-  classNames: item.classNames,
-  phone: item.phone,
-  status: item.status,
-})
-
 const classAccentColors = ['#4f46e5', '#0f766e', '#dc2626', '#7c3aed', '#db2777']
-const currentClassYear = new Date().getFullYear().toString()
-
-const normalizeClassName = (value: string) => {
-  const trimmed = value.trim().replace(/\s+/g, ' ')
-  if (!trimmed) return ''
-
-  const prefix = `${currentClassYear}_`
-  return trimmed.startsWith(prefix) ? trimmed : `${prefix}${trimmed}`
-}
-
-const stripClassYearPrefix = (value: string) => {
-  const prefix = `${currentClassYear}_`
-  return value.startsWith(prefix) ? value.slice(prefix.length) : value
-}
-
-const normalizeExcelHeader = (value: string) =>
-  value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-
-const readExcelCellText = (value: unknown) => {
-  if (typeof value === 'string') return value.trim()
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value).trim()
-  return ''
-}
-
-const readExcelRowValue = (row: Record<string, unknown>, keys: string[]) => {
-  for (const key of keys) {
-    const text = readExcelCellText(row[key])
-    if (text) return text
-  }
-
-  return ''
-}
-
 const escapeXmlValue = (value: string) =>
   value
     .replace(/&/g, '&amp;')
@@ -139,25 +40,6 @@ const escapeXmlValue = (value: string) =>
 
 function App() {
   const [activeSection, setActiveSection] = useState<Section>('Tổng quan')
-  const [students, setStudents] = useState<StudentSummary[]>([])
-  const [showStudentForm, setShowStudentForm] = useState(false)
-  const [studentForm, setStudentForm] = useState({ name: '', classId: '', phone: '', parentName: '' })
-  const [editingStudentId, setEditingStudentId] = useState<number | null>(null)
-  const [showStudentExcelModal, setShowStudentExcelModal] = useState(false)
-  const [studentExcelFile, setStudentExcelFile] = useState<File | null>(null)
-  const [studentExcelImporting, setStudentExcelImporting] = useState(false)
-  const [studentExcelResult, setStudentExcelResult] = useState<StudentExcelImportResult | null>(null)
-  const [studentExcelError, setStudentExcelError] = useState('')
-  const [studentSearch, setStudentSearch] = useState('')
-  const [studentToDeactivate, setStudentToDeactivate] = useState<StudentSummary | null>(null)
-  const [teachers, setTeachers] = useState<TeacherSummary[]>([])
-  const [showTeacherForm, setShowTeacherForm] = useState(false)
-  const [teacherForm, setTeacherForm] = useState({ name: '', nickname: '', classIds: [] as number[], phone: '' })
-  const [editingTeacherId, setEditingTeacherId] = useState<number | null>(null)
-  const [teacherSearch, setTeacherSearch] = useState('')
-  const [teacherToDeactivate, setTeacherToDeactivate] = useState<TeacherSummary | null>(null)
-  const [showTeacherNameRequiredModal, setShowTeacherNameRequiredModal] = useState(false)
-  const [classes, setClasses] = useState<ClassSummary[]>([])
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null)
   const [classForm, setClassForm] = useState<{ name: string; scheduleBlocks: ScheduleBlock[]; description: string }>({
     name: '',
@@ -197,38 +79,11 @@ function App() {
   const [deleteClassNameInput, setDeleteClassNameInput] = useState('')
   const [scheduleDayToRemove, setScheduleDayToRemove] = useState<string | null>(null)
   const [lastSelectedScheduleDay, setLastSelectedScheduleDay] = useState<string | null>(null)
-  const [apiError, setApiError] = useState('')
-  const [isLoadingData, setIsLoadingData] = useState(true)
+  const { classes, students, teachers, apiError, isLoadingData, setApiError, loadClasses, loadStudents, loadTeachers } = useAppData()
   const classItemRefs = useRef<Record<number, HTMLLIElement | null>>({})
 
   const selectedClassInfo = selectedClassId ? classes.find((cls) => cls.id === selectedClassId) ?? null : null
   const availableClassOptions = useMemo(() => classes.slice().sort((a, b) => a.name.localeCompare(b.name)), [classes])
-  const filteredStudents = useMemo(() => {
-    const query = studentSearch.trim().toLowerCase()
-    if (!query) {
-      return students
-    }
-
-    return students.filter((student) => {
-      const studentName = student.name.toLowerCase()
-      const className = student.className.toLowerCase()
-      return studentName.includes(query) || className.includes(query)
-    })
-  }, [studentSearch, students])
-
-  const filteredTeachers = useMemo(() => {
-    const query = teacherSearch.trim().toLowerCase()
-    if (!query) {
-      return teachers
-    }
-
-    return teachers.filter((teacher) => {
-      const teacherName = teacher.name.toLowerCase()
-      const teacherNickname = teacher.nickname.toLowerCase()
-      const classNames = teacher.classNames.join(', ').toLowerCase()
-      return teacherName.includes(query) || teacherNickname.includes(query) || classNames.includes(query)
-    })
-  }, [teacherSearch, teachers])
 
   const reportClassName = useMemo(
     () => (reportClassId ? availableClassOptions.find((item) => item.id === reportClassId)?.name ?? '' : ''),
@@ -265,56 +120,6 @@ function App() {
     [classes, selectedAttendanceClassId],
   )
 
-  const loadClasses = async () => {
-    const classItems = await api.getClasses()
-    setClasses(classItems.map(mapApiClassToSummary))
-  }
-
-  const loadStudents = async () => {
-    const studentItems = await api.getStudents()
-    setStudents(studentItems.map(mapApiStudentToSummary))
-  }
-
-  const loadTeachers = async () => {
-    const teacherItems = await api.getTeachers()
-    setTeachers(teacherItems.map(mapApiTeacherToSummary))
-  }
-
-  const addTeacher = async () => {
-    const trimmedName = teacherForm.name.trim()
-    const trimmedNickname = teacherForm.nickname.trim()
-    const uniqueClassIds = Array.from(new Set(teacherForm.classIds)).filter((classId) => Number.isInteger(classId) && classId > 0)
-    const trimmedPhone = teacherForm.phone.trim()
-
-    if (!trimmedName || !trimmedNickname) {
-      setShowTeacherNameRequiredModal(true)
-      return
-    }
-
-    if (uniqueClassIds.length === 0 || !trimmedPhone) return
-
-    setApiError('')
-    try {
-      const teacherPayload = {
-        name: trimmedName,
-        nickname: trimmedNickname,
-        classIds: uniqueClassIds,
-        phone: trimmedPhone,
-      }
-
-      if (editingTeacherId !== null) {
-        await api.updateTeacher(editingTeacherId, teacherPayload)
-      } else {
-        await api.createTeacher(teacherPayload)
-      }
-
-      await loadTeachers()
-      resetTeacherForm()
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : editingTeacherId !== null ? 'Không thể cập nhật giáo viên.' : 'Không thể thêm giáo viên.')
-    }
-  }
-
   const createDefaultScheduleBlock = (day: string): ScheduleBlock => ({
     day,
     startTime: '17:00',
@@ -329,284 +134,6 @@ function App() {
     setScheduleDayToRemove(null)
     setManageView('classes')
   }
-
-  const resetStudentForm = () => {
-    setStudentForm({ name: '', classId: '', phone: '', parentName: '' })
-    setEditingStudentId(null)
-    setShowStudentForm(false)
-  }
-
-  const openStudentEditForm = (student: StudentSummary) => {
-    setEditingStudentId(student.id)
-    setStudentForm({
-      name: student.name,
-      classId: String(student.classId),
-      phone: student.phone,
-      parentName: student.parentName,
-    })
-    setShowStudentForm(true)
-  }
-
-  const openStudentExcelModal = () => {
-    setStudentExcelFile(null)
-    setStudentExcelResult(null)
-    setStudentExcelError('')
-    setShowStudentExcelModal(true)
-  }
-
-  const downloadStudentExcelTemplate = async () => {
-    try {
-      const link = document.createElement('a')
-      link.href = studentExcelTemplateUrl
-      link.download = 'mau-nhap-hoc-vien.xlsx'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-    } catch (error) {
-      setStudentExcelError(error instanceof Error ? error.message : 'Không thể tải template Excel.')
-    }
-  }
-
-  const closeStudentExcelModal = () => {
-    setShowStudentExcelModal(false)
-    setStudentExcelFile(null)
-    setStudentExcelResult(null)
-    setStudentExcelError('')
-    setStudentExcelImporting(false)
-  }
-
-  const handleStudentExcelFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null
-    setStudentExcelFile(file)
-    setStudentExcelResult(null)
-    setStudentExcelError('')
-  }
-
-  const importStudentsFromExcel = async () => {
-    if (!studentExcelFile) {
-      setStudentExcelError('Vui lòng chọn file Excel trước khi nhập.')
-      return
-    }
-
-    setStudentExcelImporting(true)
-    setStudentExcelError('')
-    setStudentExcelResult(null)
-
-    try {
-      const workbook = XLSX.read(await studentExcelFile.arrayBuffer(), { type: 'array' })
-      const sheetName = workbook.SheetNames[0]
-      if (!sheetName) {
-        throw new Error('File Excel không có sheet dữ liệu.')
-      }
-
-      const worksheet = workbook.Sheets[sheetName]
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '', raw: false })
-      if (rows.length === 0) {
-        throw new Error('Không tìm thấy dữ liệu học viên trong file Excel.')
-      }
-
-      const normalizedClasses = classes.map((item) => ({
-        ...item,
-        normalizedName: normalizeExcelHeader(item.name),
-        strippedName: normalizeExcelHeader(stripClassYearPrefix(item.name)),
-      }))
-
-      let imported = 0
-      let skipped = 0
-      const errors: string[] = []
-
-      for (const [index, row] of rows.entries()) {
-        const normalizedRow = Object.fromEntries(
-          Object.entries(row).map(([key, value]) => [normalizeExcelHeader(key), value]),
-        ) as Record<string, unknown>
-
-        const studentName = readExcelRowValue(normalizedRow, ['ten hoc vien', 'hoc vien', 'ten', 'name', 'ho ten'])
-        const classIdText = readExcelRowValue(normalizedRow, ['class id', 'classid', 'lop hoc id', 'lop id'])
-        const classNameText = readExcelRowValue(normalizedRow, ['lop hoc', 'lop', 'class', 'class name', 'ten lop'])
-        const phone = readExcelRowValue(normalizedRow, ['so dien thoai', 'dien thoai', 'phone', 'sdt'])
-        const parentName = readExcelRowValue(normalizedRow, ['ten phu huynh', 'phu huynh', 'parent name', 'parent'])
-
-        if (!studentName || (!classIdText && !classNameText) || !phone || !parentName) {
-          skipped += 1
-          errors.push(`Dòng ${index + 2}: thiếu tên học viên, lớp, số điện thoại hoặc tên phụ huynh.`)
-          continue
-        }
-
-        const classIdFromFile = Number(classIdText)
-        const matchedClass = Number.isInteger(classIdFromFile) && classIdFromFile > 0
-          ? classes.find((item) => item.id === classIdFromFile) ?? null
-          : normalizedClasses.find(
-              (item) =>
-                item.normalizedName === normalizeExcelHeader(classNameText) ||
-                item.strippedName === normalizeExcelHeader(classNameText),
-            ) ?? null
-
-        if (!matchedClass) {
-          skipped += 1
-          errors.push(`Dòng ${index + 2}: không tìm thấy lớp phù hợp với "${classIdText || classNameText}".`)
-          continue
-        }
-
-        try {
-          await api.createStudent({
-            name: studentName,
-            classId: matchedClass.id,
-            phone,
-            parentName,
-          })
-          imported += 1
-        } catch (error) {
-          skipped += 1
-          errors.push(`Dòng ${index + 2}: ${error instanceof Error ? error.message : 'không thể thêm học viên.'}`)
-        }
-      }
-
-      if (imported > 0) {
-        await Promise.all([loadStudents(), loadClasses()])
-      }
-
-      setStudentExcelResult({ imported, skipped, errors })
-    } catch (error) {
-      setStudentExcelError(error instanceof Error ? error.message : 'Không thể đọc file Excel.')
-    } finally {
-      setStudentExcelImporting(false)
-    }
-  }
-
-  const resetTeacherForm = () => {
-    setTeacherForm({ name: '', nickname: '', classIds: [], phone: '' })
-    setEditingTeacherId(null)
-    setShowTeacherForm(false)
-    setShowTeacherNameRequiredModal(false)
-  }
-
-  const openTeacherEditForm = (teacher: TeacherSummary) => {
-    setTeacherForm({
-      name: teacher.name,
-      nickname: teacher.nickname,
-      classIds: teacher.classIds,
-      phone: teacher.phone,
-    })
-    setEditingTeacherId(teacher.id)
-    setShowTeacherNameRequiredModal(false)
-    setShowTeacherForm(true)
-  }
-
-  const clearStudentSearch = () => {
-    setStudentSearch('')
-  }
-
-  const clearTeacherSearch = () => {
-    setTeacherSearch('')
-  }
-
-  const openTeacherDeactivateModal = (teacher: TeacherSummary) => {
-    setTeacherToDeactivate(teacher)
-  }
-
-  const closeTeacherDeactivateModal = () => {
-    setTeacherToDeactivate(null)
-  }
-
-  const activateTeacher = async (teacher: TeacherSummary) => {
-    setApiError('')
-    try {
-      await api.updateTeacherStatus(teacher.id, 'Active')
-      await loadTeachers()
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Không thể chuyển trạng thái giáo viên.')
-    }
-  }
-
-  const confirmTeacherDeactivate = async () => {
-    if (!teacherToDeactivate) return
-
-    setApiError('')
-    try {
-      await api.updateTeacherStatus(teacherToDeactivate.id, 'Inactive')
-      await loadTeachers()
-      setTeacherToDeactivate(null)
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Không thể chuyển trạng thái giáo viên.')
-    }
-  }
-
-  const openStudentDeactivateModal = (student: StudentSummary) => {
-    setStudentToDeactivate(student)
-  }
-
-  const closeStudentDeactivateModal = () => {
-    setStudentToDeactivate(null)
-  }
-
-  const activateStudent = async (student: StudentSummary) => {
-    setApiError('')
-    try {
-      await api.updateStudentStatus(student.id, 'Active')
-      await loadStudents()
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Không thể chuyển trạng thái học viên.')
-    }
-  }
-
-  const confirmStudentDeactivate = async () => {
-    if (!studentToDeactivate) return
-
-    setApiError('')
-    try {
-      await api.updateStudentStatus(studentToDeactivate.id, 'Inactive')
-      await loadStudents()
-      setStudentToDeactivate(null)
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Không thể chuyển trạng thái học viên.')
-    }
-  }
-
-  const addStudent = async () => {
-    const trimmedName = studentForm.name.trim()
-    const classId = Number(studentForm.classId)
-    const trimmedPhone = studentForm.phone.trim()
-    const trimmedParentName = studentForm.parentName.trim()
-
-    if (!trimmedName || !Number.isInteger(classId) || classId <= 0 || !trimmedPhone || !trimmedParentName) return
-
-    const payload = {
-      name: trimmedName,
-      classId,
-      phone: trimmedPhone,
-      parentName: trimmedParentName,
-    }
-
-    setApiError('')
-    try {
-      if (editingStudentId !== null) {
-        await api.updateStudent(editingStudentId, payload)
-      } else {
-        await api.createStudent(payload)
-      }
-      await loadStudents()
-      await loadClasses()
-      resetStudentForm()
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : editingStudentId !== null ? 'Không thể cập nhật học viên.' : 'Không thể thêm học viên.')
-    }
-  }
-
-  useEffect(() => {
-    const initializeData = async () => {
-      setIsLoadingData(true)
-      setApiError('')
-      try {
-        await Promise.all([loadClasses(), loadStudents(), loadTeachers()])
-      } catch (error) {
-        setApiError(error instanceof Error ? error.message : 'Không thể tải dữ liệu từ backend.')
-      } finally {
-        setIsLoadingData(false)
-      }
-    }
-
-    void initializeData()
-  }, [])
 
   useEffect(() => {
     if (selectedClassId === null) return
@@ -1189,8 +716,6 @@ function App() {
           className="brand"
           type="button"
           onClick={() => {
-            resetStudentForm()
-            resetTeacherForm()
             setActiveSection('Tổng quan')
             setManageView('menu')
             setSelectedClassId(null)
@@ -1210,8 +735,6 @@ function App() {
               className={`nav-item ${activeSection === item ? 'active' : ''}`}
               type="button"
               onClick={() => {
-                resetStudentForm()
-                resetTeacherForm()
                 setActiveSection(item)
                 if (item === 'Lớp học') {
                   setManageView('menu')
@@ -2138,303 +1661,22 @@ function App() {
             )}
           </section>
         ) : activeSection === 'Học viên' ? (
-          <>
-            <section className="card student-form-card">
-              <div className="student-form-header">
-                <div className="student-form-actions">
-                  <button
-                    type="button"
-                    className="student-add-toggle-button"
-                    onClick={() => {
-                      resetStudentForm()
-                      setShowStudentForm(true)
-                    }}
-                  >
-                    + Thêm học viên
-                  </button>
-                  <button type="button" className="button-secondary student-excel-toggle-button" onClick={openStudentExcelModal}>
-                    Thêm học viên - Excel
-                  </button>
-                </div>
-              </div>
-
-              {showStudentForm ? (
-                <div className="student-inline-form">
-                  <div className="student-form-header-row">
-                    <h4>{editingStudentId !== null ? 'Sửa thông tin học viên' : 'Thêm học viên mới'}</h4>
-                    <button type="button" className="button-secondary form-close-button" onClick={resetStudentForm}>
-                      Đóng
-                    </button>
-                  </div>
-                  <div className="student-field-row">
-                    <label>
-                      Tên học viên
-                      <input
-                        value={studentForm.name}
-                        onChange={(e) => setStudentForm((prev) => ({ ...prev, name: e.target.value }))}
-                        placeholder="Nhập tên học viên"
-                        aria-label="Tên học viên"
-                      />
-                    </label>
-                    <label>
-                      Lớp học
-                      <select
-                        value={studentForm.classId}
-                        onChange={(e) => setStudentForm((prev) => ({ ...prev, classId: e.target.value }))}
-                        aria-label="Lớp học"
-                      >
-                        <option value="">Chọn lớp học</option>
-                        {availableClassOptions.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <div className="student-field-row">
-                    <label>
-                      Số điện thoại
-                      <input
-                        value={studentForm.phone}
-                        onChange={(e) => setStudentForm((prev) => ({ ...prev, phone: e.target.value }))}
-                        placeholder="Nhập số điện thoại"
-                        aria-label="Số điện thoại học viên"
-                      />
-                    </label>
-                    <label>
-                      Tên phụ huynh
-                      <input
-                        value={studentForm.parentName}
-                        onChange={(e) => setStudentForm((prev) => ({ ...prev, parentName: e.target.value }))}
-                        placeholder="Nhập tên phụ huynh"
-                        aria-label="Tên phụ huynh"
-                      />
-                    </label>
-                  </div>
-                  <div className="form-actions">
-                    <button type="button" className="student-save-button" onClick={addStudent}>
-                      Lưu học viên
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="card student-list-card">
-              <div className="card-header">
-                <h3>Danh sách học viên ({filteredStudents.length})</h3>
-              </div>
-              <div className="student-list-topline">
-                <div className="student-search-field">
-                  <input
-                    value={studentSearch}
-                    onChange={(e) => setStudentSearch(e.target.value)}
-                    placeholder="Tìm theo tên học viên hoặc lớp học"
-                    aria-label="Tìm học viên theo tên hoặc lớp học"
-                  />
-                  {studentSearch.trim() ? (
-                    <button type="button" className="button-secondary student-search-clear" onClick={clearStudentSearch}>
-                      Xóa lọc
-                    </button>
-                  ) : null}
-                </div>
-                <p className="student-search-hint">
-                  {studentSearch.trim()
-                    ? `Đang lọc theo “${studentSearch.trim()}”`
-                    : 'Bạn có thể tìm theo tên học viên hoặc tên lớp học.'}
-                </p>
-              </div>
-              {isLoadingData ? <p>Đang tải danh sách học viên...</p> : null}
-              {filteredStudents.length > 0 ? (
-                <ul className="student-list">
-                  {filteredStudents.map((student) => (
-                      <li
-                        key={student.id}
-                        className={student.status === 'Inactive' ? 'student-list-item--inactive' : 'student-list-item--active'}
-                      >
-                        <div className="student-list-headline">
-                          <strong>{student.name}</strong>
-                          <div className="student-list-actions">
-                            {student.status !== 'Inactive' ? <span className="student-status-badge">Active</span> : null}
-                            {student.status !== 'Inactive' ? (
-                              <>
-                                <button type="button" className="button-secondary student-edit-button" onClick={() => openStudentEditForm(student)}>
-                                  Edit
-                                </button>
-                                <button type="button" className="student-inactive-button" onClick={() => openStudentDeactivateModal(student)}>
-                                  Inactive
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <span className="student-inactive-chip">Inactive</span>
-                                <button type="button" className="student-active-button" onClick={() => void activateStudent(student)}>
-                                  Active
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <span>{student.className}</span>
-                        <span>{student.phone}</span>
-                        <span>{student.parentName}</span>
-                      </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="student-empty-state">Không tìm thấy học viên phù hợp.</p>
-              )}
-            </section>
-          </>
+          <StudentsSection
+            students={students}
+            classes={classes}
+            isLoadingData={isLoadingData}
+            setApiError={setApiError}
+            onStudentsChanged={loadStudents}
+            onClassesChanged={loadClasses}
+          />
         ) : activeSection === 'Giáo Viên' ? (
-          <>
-            <section className="card teacher-form-card">
-              <div className="student-form-header">
-                <button type="button" className="student-add-toggle-button teacher-add-toggle-button" onClick={() => {
-                  setEditingTeacherId(null)
-                  setTeacherForm({ name: '', nickname: '', classIds: [], phone: '' })
-                  setShowTeacherForm(true)
-                }}>
-                  + Thêm giáo viên
-                </button>
-              </div>
-
-              {showTeacherForm ? (
-                <div className="student-inline-form teacher-inline-form">
-                  <div className="teacher-form-title-row">
-                    <h4>{editingTeacherId !== null ? 'Sửa thông tin giáo viên' : 'Thêm giáo viên mới'}</h4>
-                    <button type="button" className="button-secondary form-close-button" onClick={resetTeacherForm}>
-                      Đóng
-                    </button>
-                  </div>
-                  <div className="student-field-row">
-                    <label>
-                      Tên giáo viên
-                      <input
-                        value={teacherForm.name}
-                        onChange={(e) => setTeacherForm((prev) => ({ ...prev, name: e.target.value }))}
-                        placeholder="Nhập tên giáo viên"
-                        aria-label="Tên giáo viên"
-                      />
-                    </label>
-                    <label>
-                      Biệt danh
-                      <input
-                        value={teacherForm.nickname}
-                        onChange={(e) => setTeacherForm((prev) => ({ ...prev, nickname: e.target.value }))}
-                        placeholder="Nhập biệt danh"
-                        aria-label="Biệt danh giáo viên"
-                      />
-                    </label>
-                  </div>
-                  <div className="student-field-row">
-                    <label>
-                      Số điện thoại
-                      <input
-                        value={teacherForm.phone}
-                        onChange={(e) => setTeacherForm((prev) => ({ ...prev, phone: e.target.value }))}
-                        placeholder="Nhập số điện thoại"
-                        aria-label="Số điện thoại giáo viên"
-                      />
-                    </label>
-                  </div>
-                  <div className="student-field-row teacher-field-row--single">
-                    <label className="teacher-class-picker">
-                      <span className="teacher-class-picker-label">Lớp phụ trách</span>
-                      <select
-                        multiple
-                        className="teacher-class-multiselect"
-                        value={teacherForm.classIds.map(String)}
-                        onChange={(e) => {
-                          const selectedIds = Array.from(e.target.selectedOptions).map((option) => Number(option.value))
-                          setTeacherForm((prev) => ({ ...prev, classIds: selectedIds }))
-                        }}
-                        aria-label="Chọn lớp phụ trách"
-                      >
-                        {availableClassOptions.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <div className="form-actions">
-                    <button type="button" className="student-save-button teacher-save-button" onClick={() => void addTeacher()}>
-                      Lưu giáo viên
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </section>
-
-            <section className="card teacher-list-card">
-              <div className="card-header">
-                <h3>Danh sách giáo viên ({filteredTeachers.length})</h3>
-              </div>
-              <div className="student-list-topline">
-                <div className="student-search-field">
-                  <input
-                    value={teacherSearch}
-                    onChange={(e) => setTeacherSearch(e.target.value)}
-                    placeholder="Tìm theo tên giáo viên hoặc lớp phụ trách"
-                    aria-label="Tìm giáo viên theo tên hoặc lớp phụ trách"
-                  />
-                  {teacherSearch.trim() ? (
-                    <button type="button" className="button-secondary student-search-clear" onClick={clearTeacherSearch}>
-                      Xóa lọc
-                    </button>
-                  ) : null}
-                </div>
-                <p className="student-search-hint">
-                  {teacherSearch.trim()
-                    ? `Đang lọc theo "${teacherSearch.trim()}"`
-                    : 'Bạn có thể tìm theo tên giáo viên hoặc tên lớp phụ trách.'}
-                </p>
-              </div>
-              {isLoadingData ? <p>Đang tải danh sách giáo viên...</p> : null}
-              {filteredTeachers.length > 0 ? (
-                <ul className="student-list">
-                  {filteredTeachers.map((teacher) => (
-                    <li
-                      key={teacher.id}
-                      className={`teacher-list-item ${teacher.status === 'Inactive' ? 'student-list-item--inactive' : 'student-list-item--active'}`}
-                    >
-                      <div className="student-list-headline">
-                        <strong>{teacher.name}</strong>
-                        <div className="student-list-actions">
-                          {teacher.status !== 'Inactive' ? <span className="student-status-badge teacher-status-badge">Active</span> : null}
-                          {teacher.status !== 'Inactive' ? (
-                            <>
-                              <button type="button" className="teacher-edit-button" onClick={() => openTeacherEditForm(teacher)}>
-                                Edit
-                              </button>
-                              <button type="button" className="student-inactive-button" onClick={() => openTeacherDeactivateModal(teacher)}>
-                                Inactive
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <span className="student-inactive-chip">Inactive</span>
-                              <button type="button" className="student-active-button" onClick={() => void activateTeacher(teacher)}>
-                                Active
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <span className="teacher-list-nickname">{teacher.nickname}</span>
-                      <span className="teacher-list-class">{teacher.classNames.join(', ') || 'Chưa gán'}</span>
-                      <span className="teacher-list-phone">{teacher.phone}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="student-empty-state">Không tìm thấy giáo viên phù hợp.</p>
-              )}
-            </section>
-          </>
+          <TeachersSection
+            teachers={teachers}
+            classes={classes}
+            isLoadingData={isLoadingData}
+            setApiError={setApiError}
+            onTeachersChanged={loadTeachers}
+          />
         ) : activeSection === 'Học Phí' ? (
           <TuitionSection />
         ) : (
@@ -2506,111 +1748,6 @@ function App() {
               </button>
               <button type="button" onClick={confirmScheduleDayRemove}>
                 Bỏ chọn
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showStudentExcelModal ? (
-        <div className="modal-overlay">
-          <div className="modal-card student-excel-modal-card">
-            <h4>Nhập học viên từ Excel</h4>
-            <p>Tải file mẫu, điền thông tin học viên rồi chọn file Excel để nhập vào hệ thống.</p>
-
-            <div className="student-excel-template-row">
-              <button
-                type="button"
-                className="button-secondary student-excel-template-button"
-                onClick={() => void downloadStudentExcelTemplate()}
-              >
-                Tải file mẫu
-              </button>
-            </div>
-
-            <div className="student-excel-file-field">
-              <input type="file" accept=".xlsx,.xls" onChange={handleStudentExcelFileChange} aria-label="Chọn file Excel học viên" />
-              {studentExcelFile ? <p className="student-excel-file-name">{studentExcelFile.name}</p> : null}
-            </div>
-
-            {studentExcelError ? <p className="student-excel-error">{studentExcelError}</p> : null}
-
-            {studentExcelResult ? (
-              <div className="student-excel-summary">
-                <strong>
-                  Đã nhập {studentExcelResult.imported} học viên, bỏ qua {studentExcelResult.skipped} dòng.
-                </strong>
-                {studentExcelResult.errors.length > 0 ? (
-                  <ul>
-                    {studentExcelResult.errors.map((message, index) => (
-                      <li key={index}>{message}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="modal-actions">
-              <button type="button" className="modal-close-button" onClick={closeStudentExcelModal}>
-                Đóng
-              </button>
-              <button
-                type="button"
-                className="student-excel-import-button"
-                disabled={!studentExcelFile || studentExcelImporting}
-                onClick={() => void importStudentsFromExcel()}
-              >
-                {studentExcelImporting ? 'Đang nhập...' : 'Nhập học viên'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {studentToDeactivate ? (
-        <div className="modal-overlay">
-          <div className="modal-card student-deactivate-modal-card">
-            <h4>Chuyển học viên sang Inactive?</h4>
-            <p>
-              Học viên “{studentToDeactivate.name}” sẽ không còn tính vào sĩ số lớp {studentToDeactivate.className}.
-            </p>
-            <div className="modal-actions">
-              <button type="button" className="student-deactivate-cancel-button" onClick={closeStudentDeactivateModal}>
-                Hủy
-              </button>
-              <button type="button" className="student-deactivate-confirm-button" onClick={() => void confirmStudentDeactivate()}>
-                Inactive
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showTeacherNameRequiredModal ? (
-        <div className="modal-overlay">
-          <div className="modal-card teacher-name-required-modal">
-            <h4>Thiếu thông tin giáo viên</h4>
-            <p>Vui lòng nhập tên và biệt danh giáo viên trước khi lưu.</p>
-            <div className="modal-actions">
-              <button type="button" className="teacher-name-required-button" onClick={() => setShowTeacherNameRequiredModal(false)}>
-                Đã hiểu
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {teacherToDeactivate ? (
-        <div className="modal-overlay">
-          <div className="modal-card teacher-deactivate-modal-card">
-            <h4>Chuyển giáo viên sang Inactive?</h4>
-            <p>Giáo viên “{teacherToDeactivate.name}” sẽ không còn hiển thị là đang giảng dạy.</p>
-            <div className="modal-actions">
-              <button type="button" className="teacher-deactivate-cancel-button" onClick={closeTeacherDeactivateModal}>
-                Hủy
-              </button>
-              <button type="button" className="teacher-deactivate-confirm-button" onClick={() => void confirmTeacherDeactivate()}>
-                Inactive
               </button>
             </div>
           </div>
